@@ -1,2 +1,2 @@
-# FIFA_World_Cup_Survival_Analysis_with_R
-FIFA_World_Cup_Survival_Analysis_with_R
+# Churn Telco Survival Analysis
+Telco is a phone company facing a churn problem. The company have collected a dataset of its past customers and wants to know if new customer will STAY or LEAVE.  

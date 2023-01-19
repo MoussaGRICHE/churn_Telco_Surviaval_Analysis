@@ -1,0 +1,372 @@
+---
+title: "Churn Telco Survival Analysis"
+date: "2022-12-15"
+output:
+  pdf_document: 
+    toc_depth: 5
+  html_document:
+    df_print: paged
+geometry: margin=1cm
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# question
+Telco is a phone company facing a churn problem. The company have collected a dataset of its past customers and wants to know if new customer will STAY or LEAVE.  
+
+```{r include=FALSE}
+library(tidyverse)
+library(survival)
+library(survminer)
+```
+
+
+# Load the dataset and data cleaning
+```{r}
+# load the Telco dataset 
+df_Telco <- read.csv("./Telco_dataset.csv", sep =";")
+```
+
+```{r}
+# Keep the feature of interest
+features <- c("CUSTOMER_ID", "COLLEGE", "DATA_Categorie", "INCOME_Categorie", "OVERCHARGE_Categorie", "LEFTOVER", "HOUSE", "CHILD", "JOB_CLASS","TIME_CLIENT","AVERAGE_CALL_DURATION", "REPORTED_SATISFACTION","REPORTED_USAGE_LEVEL","CONSIDERING_CHANGE_OF_PLAN","CHURNED")
+
+# Create a dataframe, df_subset for the survival analysis
+df_subset_Telco <- df_Telco[,features]
+
+```
+```{r include=FALSE}
+# There are 635 missing values for the feature HOUSE. It means that Telco do not have the price of these customers house.
+# We will complete these missing prices by taking the mean of the house price according to the feature JOB_CLASSE.
+df_subset_Telco %>% group_by(JOB_CLASS) %>% fill(HOUSE, .direction="downup")
+```
+
+
+For our analysis we have a dataframe with the status "CHURNED", 13 other features.
+
+Categorical features:\newline
+-   CUSTOMER_ID: Id of each customer.\newline
+-   COLLEGE: zero if customer is not college educated, one else.\newline
+-   DATA_Categorie: monthly consumption of data (in Mo).\newline
+-   INCOME_Categorie: Annual income salary of the customer.\newline
+-   OVERCHARGE_Categorie: Average overcharge per year.\newline
+-   JOB_CLASS: from 1 to 4, type of job by classes.\newline
+-   REPORTED_SATISFACTION: 'avg' average, 'sat' satisfied ,'unsat' unsatisfied, 'ver_sat' very satisfied, 'very_unsat' very unsatisfied.\newline
+-   REPORTED_USAGE_LEVEL: avg, high, little, very_high, very_little.\newline
+-   CONSIDERING_CHANGE_OF_PLAN: actively_looking_into_it, considering, never_thought, no, perhaps.
+
+Continuous features:\newline
+-   LEFTOVER: Average number of leftover minutes per month.\newline
+-   HOUSE: Estimated value of customer's house.\newline
+-   CHILD: Numbers of children.\newline
+-   AVERAGE_CALL_DURATION: Average duration of a call.
+
+## Convention for the status
+
+For our categorical features we may need to specify explicitly the level for better explainability.
+
+### churned convention
+We want to change the column
+
+-   LEAVE: by the value 0
+-   STAY: by the value 1
+
+```{r}
+df_subset_Telco <- df_subset_Telco %>%
+  rename(status = "CHURNED", duration = "TIME_CLIENT")%>%
+  mutate(status = ifelse(status == "STAY", 1, 0) )%>%
+  mutate(COLLEGE = ifelse(COLLEGE == "one",1,0))
+```
+
+### Type of REPORTED_SATISFACTION chr > fctr
+
+We want to level the variable type of REPORTED_SATISFACTION, REPORTED_USAGE_LEVEL, CONSIDERING_CHANGE_OF_PLAN.
+
+```{r}
+df_subset_Telco <- df_subset_Telco |>
+  mutate(REPORTED_SATISFACTION  = factor(REPORTED_SATISFACTION )) |>
+  mutate(REPORTED_SATISFACTION = relevel(REPORTED_SATISFACTION , ref = 'avg'))
+df_subset_Telco <- df_subset_Telco |>
+  mutate(REPORTED_USAGE_LEVEL  = factor(REPORTED_USAGE_LEVEL )) |>
+  mutate(REPORTED_USAGE_LEVEL = relevel(REPORTED_USAGE_LEVEL , ref = 'avg'))
+df_subset_Telco <- df_subset_Telco |>
+  mutate(CONSIDERING_CHANGE_OF_PLAN  = factor(CONSIDERING_CHANGE_OF_PLAN )) |>
+  mutate(CONSIDERING_CHANGE_OF_PLAN = relevel(CONSIDERING_CHANGE_OF_PLAN , ref = 'perhaps'))
+df_subset_Telco <- df_subset_Telco |>
+  mutate(DATA_Categorie  = factor(DATA_Categorie )) |>
+  mutate(DATA_Categorie = relevel(DATA_Categorie , ref = 'Between 1 and 2 Gbs/month'))
+df_subset_Telco <- df_subset_Telco |>
+  mutate(INCOME_Categorie  = factor(INCOME_Categorie )) |>
+  mutate(INCOME_Categorie = relevel(INCOME_Categorie , ref = 'Between 25000 and 50000 $/year'))
+df_subset_Telco <- df_subset_Telco |>
+  mutate(OVERCHARGE_Categorie  = factor(OVERCHARGE_Categorie )) |>
+  mutate(OVERCHARGE_Categorie = relevel(OVERCHARGE_Categorie , ref = 'Between 100 and 200 $/year'))
+```
+
+# Non parametric survival analysis
+
+## Overall non parametric survival analysis  
+
+Let's have a look on the survival time of the clients.
+
+```{r fig.height = 3.5, fig.width = 7, fig.align='center'}
+## Nelson-AAlen estimator
+fit_na <- survfit(Surv(duration, status) ~ 1, data = df_subset_Telco, type = "fh")
+plot(fit_na, main ="Nelson Aalen survival estimator",
+     xlab = "Years", ylab= "Survival function")
+```
+
+Nelson Aalen survival estimator indicates that there is 50% chance to STAY with the phone company if tenure in years is less than 3.3 year.
+
+
+# JOB_CLASS variable
+## Kaplan-meier with one feature and 2 groups: JOB_CLASS
+
+Now we want to analyse the survival time of the client depending on his job class.
+
+```{r fig.height = 3, fig.width = 7, fig.align='center'}
+surv_job_class <- survfit(Surv(duration, status ) ~ JOB_CLASS, data = df_subset_Telco)
+
+ggsurvplot(surv_job_class, pval = TRUE, conf.int = TRUE,
+          xlab = "Time in years", risk.table.col = "strata", linetype = "strata", 
+          surv.median.line ="hv", ggtheme = theme_bw(), legend=c(0.6,0.7))
+```
+
+
+We observe that JOB_CLASSES seems having the same distribution and the survival probabilities of the four classes are almost equal. 
+
+We could confirm this by looking on the significance of this difference with a LogRank.
+
+## LogRank: JOB_CLASS
+
+Let's define the null hypothesis H0 : the four groups have the same survival distributions.
+
+```{r}
+logrank_job_class <- survdiff(Surv(duration, status ) ~ JOB_CLASS, data = df_subset_Telco)
+```
+
+Call:
+survdiff(formula = Surv(duration, status) ~ JOB_CLASS, data = df_subset_Telco)
+
+Chisq= 0.7  on 3 degrees of freedom, p= 0.9
+
+
+The p-value is superior to 0.05. We accept the null hypothesis and conclude there is no significant impact of the JOB_CLASS on the survival results.
+
+# INCOME Variable:
+## Kaplan-meier with one feature and 2 groups: INCOME
+
+
+```{r fig.height = 3, fig.width = 7, fig.align='center'}
+surv_income <- survfit(Surv(duration, status ) ~ INCOME_Categorie, data = df_subset_Telco)
+
+ggsurvplot(surv_income, pval = TRUE, conf.int = TRUE,
+          xlab = "Time in years", risk.table.col = "strata", 
+          linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(),legend=c(0.7,0.7))
+```
+We could see that one class of the Income variable have a different distribution that the others categories. Also, the survival probability of this category is bigger than the others survival probabilities. This means that 50% of the customers with high income stay at least 4 years while 50% of the customers with less income stay about 3 years.
+
+Let's have a look on the significance of this difference with a LogRank.
+
+## LogRank: INCOME
+
+Let's define the null hypothesis H0 : the four groups have the same survival distributions.
+
+```{r}
+logrank_income <- survdiff(Surv(duration, status ) ~ INCOME_Categorie, data = df_subset_Telco)
+```
+
+Call:
+
+survdiff(formula = Surv(duration, status) ~ INCOME_Categorie, 
+    data = df_subset_Telco)
+
+Chisq= 151  on 3 degrees of freedom, p= <2e-16
+
+
+The P-value << 0.05, so we reject the null hypothesis and accept the alternative hypothesis. This means that the four categories have different distributions.
+
+
+# DATA Variable
+## Kaplan-meier with one feature and 2 groups: DATA
+
+```{r fig.height = 3, fig.width = 7, fig.align='center'}
+surv_data <- survfit(Surv(duration, status ) ~ DATA_Categorie, data = df_subset_Telco)
+
+ggsurvplot(surv_data, pval = TRUE, conf.int = TRUE,
+          xlab = "Time in years", risk.table.col = "strata", 
+          linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(),legend=c(0.7,0.7))
+```
+
+We can see that the three categories have different distributions. Customers who consume more than 2 Gbs per month stay about 8 years in average. In the other side, consumers with a consumption less than 1 Gbs per month stay less than 4 years. 
+
+Let's see the significance of this difference with a LogRank.
+
+## LogRank: DATA
+
+Let's define the null hypothesis H0 : the two groups have the same survival distributions.
+
+```{r}
+logrank_data <- survdiff(Surv(duration, status ) ~ DATA_Categorie, data = df_subset_Telco)
+```
+
+Call:
+
+survdiff(formula = Surv(duration, status) ~ DATA_Categorie, data = df_subset_Telco)
+
+Chisq= 884  on 2 degrees of freedom, p= <2e-16
+
+
+The P-value << 0.05, so we reject the null hypothesis and accept the alternative one. The three Data categories have a different distributions.
+
+# OVERCHARGE Variable
+## Kaplan-meier with one feature and 2 groups: OVERCHARGE
+
+
+```{r fig.height = 3, fig.width = 7, fig.align='center'}
+surv_overcharge <- survfit(Surv(duration, status ) ~ OVERCHARGE_Categorie, data = df_subset_Telco)
+
+ggsurvplot(surv_overcharge, pval = TRUE, conf.int = TRUE,
+          xlab = "Time in years", risk.table.col = "strata", 
+          linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw(),legend=c(0.6,0.7))
+```
+We can see that the category "Between 100 and 200 \$/year" and the category "More than 200 \$/year" have almost the same distribution and the average survival time is almost the same (3.5 years). In the other hand, the category "Less than 100 \$/year" has different category and the average survival time (3 years) is less than the others categories.
+
+Let's see if we can confirm the significance of this difference with a LogRank.
+
+## LogRank: OVERCHARGE
+
+Let's define the null hypothesis H0 : the three groups have the same survival distributions.
+
+```{r}
+logrank_overcharge <- survdiff(Surv(duration, status ) ~ OVERCHARGE_Categorie, data = df_subset_Telco)
+```
+
+Call:
+
+survdiff(formula = Surv(duration, status) ~ OVERCHARGE_Categorie, 
+    data = df_subset_Telco)
+
+Chisq= 199  on 2 degrees of freedom, p= <2e-16
+
+The p-value of LogRank test is less than 0.05. Thus we accept the alternative hypothesis. This means that the 3 overcharge categories have different distributions.
+
+
+# AVERAGE_CALL_DURATION Variable
+## Kaplan-meier with one feature and 2 groups: AVERAGE_CALL_DURATION
+
+```{r fig.height = 4, fig.width = 7, fig.align='center'}
+surv_average_call_duration <- survfit(Surv(duration, status ) ~ AVERAGE_CALL_DURATION, data = df_subset_Telco)
+ggsurvplot(surv_average_call_duration, pval = TRUE, conf.int = TRUE,
+          xlab = "Time in years", risk.table.col = "strata", 
+          linetype = "strata", surv.median.line = "hv", ggtheme = theme_bw())
+```
+We can see that the average duration (in minutes) doesn't necessarily impact the tenure in year. 
+
+Let's have a look on the significance of this difference with a LogRank.
+
+## LogRank: AVERAGE_CALL_DURATION
+
+Let's define the null hypothesis H0 : the four groups have the same survival distributions.
+
+```{r}
+logrank_average_call_duration <- survdiff(Surv(duration, status ) ~ AVERAGE_CALL_DURATION, data = df_subset_Telco)
+```
+Call:
+
+survdiff(formula = Surv(duration, status) ~ AVERAGE_CALL_DURATION, 
+    data = df_subset_Telco)
+
+ Chisq= 62.9  on 12 degrees of freedom, p= 7e-09 
+ 
+The p-value is less than 0.05. We accept the alternative hypothesis.
+
+# CATEGORICAL variables
+## Kaplan Meier analysis for all the categorical variables
+
+We then conduct similar process for the other categorical variables independently and check the p-value from the log rank to test if there is a significant difference between the groups.
+
+Categorical features to analyse
+-   COLLEGE
+-   REPORTED_SATISFACTION
+-   REPORTED_USAGE_LEVEL
+-   CONSIDERING_CHANGE_OF_PLAN
+ 
+```{r}
+
+covariates <- c("COLLEGE" , "REPORTED_SATISFACTION" , "REPORTED_USAGE_LEVEL" , "CONSIDERING_CHANGE_OF_PLAN")
+univ_formulas <- sapply(covariates,function(x) as.formula(paste('Surv(duration, status)~', x)))
+univ_km <- lapply(univ_formulas, function(x){logrank_univ <- survdiff(x, data = df_subset_Telco)})
+univ_km_pvalue <- lapply(univ_km, function(x){signif(1 - pchisq(x$chisq, length(x$n) - 1), 2)})
+km_table <- t(as.data.frame(univ_km_pvalue, check.names = FALSE))
+colnames(km_table)<-"p.value"
+as.data.frame(km_table)
+```
+
+We see that the p-value of REPORTED_SATISFACTION is equal to 0.00 << 0.05. It means that each REPORTED_SATISFACTION category doesn't have the same distribution. Thus it implies that REPORTED_SATISFACTION has an impact on the survival result.
+
+The same interpretation for CONSIDERING_CHANGE_OF_PLAN since the p-value is equal to 0.00 << 0.05.
+
+
+# Models training
+## Splitting toys dataset into Train and Test Datasets:
+
+```{r}
+set.seed(123456)
+sample <- sample(c(TRUE, FALSE), nrow(df_subset_Telco), replace=TRUE, prob=c(0.80,0.20))
+df_subset_Telco.train <- df_subset_Telco[sample, ]
+df_subset_Telco.test <- df_subset_Telco[sample, ]
+```
+
+## Model 1 with all variables
+```{r}
+Churn_Telco_Model1 <- coxph(Surv(duration,status) ~ COLLEGE + DATA_Categorie + INCOME_Categorie + OVERCHARGE_Categorie + LEFTOVER + HOUSE + CHILD + JOB_CLASS + AVERAGE_CALL_DURATION + REPORTED_SATISFACTION + REPORTED_USAGE_LEVEL + CONSIDERING_CHANGE_OF_PLAN , data = df_subset_Telco.train)
+
+```
+
+\includegraphics[height=13cm]{C:/Users/lahor/Pictures/capt1.jpg}
+
+
+
+## Model 2 with only some variables
+```{r}
+Churn_Telco_Model2 <- coxph(Surv(duration, status) ~ DATA_Categorie + INCOME_Categorie + OVERCHARGE_Categorie + LEFTOVER + HOUSE + CHILD +REPORTED_SATISFACTION + AVERAGE_CALL_DURATION + CONSIDERING_CHANGE_OF_PLAN  , data = df_subset_Telco.train)
+```
+
+\includegraphics[height=11cm]{C:/Users/lahor/Pictures/capt2.jpg}
+
+
+
+
+## Models comparaison based on the AIC
+```{r}
+AIC_Model1 <- AIC(Churn_Telco_Model1)
+cat("The AIC of the model 1 equal to:", AIC_Model1, "\n")
+AIC_Model2 <-AIC(Churn_Telco_Model2)
+cat("The AIC of the model 2 equal to:", AIC_Model2)
+```
+We have constructed two models. The first (Churn_Telco_Model1) takes all the features and the second one (Churn_Telco_Model2) takes only the features that have p-value under 0.05.
+
+The AIC test shows that the two model are closed each other with some goodness to the second model. 
+
+The next validation step will be the testing on tasting data set.
+
+# Make predictions with model 1
+```{r}
+df_subset_Telco.test$Churn_Telco_pred_Model1 <- predict(Churn_Telco_Model1, newdata = df_subset_Telco.test)
+summary(coxph(Surv(status) ~ Churn_Telco_pred_Model1, data = df_subset_Telco.test))
+```
+# Make predictions with model 2
+```{r}
+df_subset_Telco.test$Churn_Telco_pred_Model2 <- predict(Churn_Telco_Model2, newdata = df_subset_Telco.test)
+summary(coxph(Surv(status) ~ Churn_Telco_pred_Model2, data = df_subset_Telco.test))
+```
+After having tested the two model on testing data set, the results are so closed and we don't see a difference in terms of prediction using the two models. 
+
+
+
+
